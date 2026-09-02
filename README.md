@@ -37,8 +37,8 @@ went, and has its own two-class scheme:
 | `final_sickled` | `Sickled1-FinalSickled` | Fully sickled — the classic elongated crescent |
 | `semi_sickled`  | `Sickled2-SemiSickled`  | Partially deformed; sickling started but did not complete |
 
-This axis is produced by its own classifier and its own three pipelines, described under
-[Sickling-degree pipelines](#sickling-degree-pipelines) below.
+This axis is produced by its own classifier and its own scripts. That work is
+**unfinished** — see [Sickling degree](#sickling-degree--work-in-progress) below.
 
 ---
 
@@ -48,7 +48,7 @@ This axis is produced by its own classifier and its own three pipelines, describ
 <repo-root>/
 ├── code/
 │   ├── pipelines/        current inference pipelines (all weights present)
-│   ├── training/         sickling-degree classifier: train / evaluate / tune CLIs
+│   ├── training/         sickling-degree classifier CLIs        [unfinished]
 │   ├── legacy/           superseded pipelines (see note below)
 │   └── notebooks/        training, analysis, and debugging notebooks
 ├── models/               ViT / Siamese / Cellpose weights        [not in git]
@@ -67,9 +67,9 @@ This axis is produced by its own classifier and its own three pipelines, describ
 
 ## Pipelines
 
-Three subtype pipelines are current. Each takes videos in and writes a run folder out.
-Three more classify *sickling degree* instead of subtype — see
-[Sickling-degree pipelines](#sickling-degree-pipelines).
+Three pipelines are current. Each takes videos in and writes a run folder out. A
+separate, unfinished line of work classifies *sickling degree* instead of subtype — see
+[Sickling degree](#sickling-degree--work-in-progress).
 
 | Script | Classes | Purpose |
 |--------|---------|---------|
@@ -170,150 +170,130 @@ want to evaluate something you just trained.
 
 ---
 
-## Sickling-degree pipelines
+## Sickling degree — work in progress
 
-Three pipelines classify **sickling degree** (`semi_sickled` vs `final_sickled`) rather
-than the A–G subtype. All three share the same front half as the subtype pipelines —
-Cellpose segmentation, cell tracking, and the all-subtype Siamese head that decides when
-a cell has sickled — and then apply `models/semi_final_classifier.pt` to the sickled
-cells. They differ in *when* the degree label is assigned and what else they report.
+> **Status: unfinished, exploratory.** This is an active line of work folded into the
+> repo so it stops living in a loose directory, not a finished pipeline. It has not been
+> validated against the wet-lab kinetics workbook the way the subtype pipelines have, the
+> three scripts are successive attempts rather than three supported options, and the
+> unfinished parts are listed at the end of this section. Read the numbers below as
+> where things stand, not as results.
 
-| Script | Degree label | Also reports |
-|--------|--------------|--------------|
-| [pipeline_semi_final_detection.py](code/pipelines/pipeline_semi_final_detection.py) | Per frame, re-decided every frame | A–G subtype composition, `state_ratio_plot.png`, `frame0_class_pie.png` |
-| [pipeline_semi_final_endpoint.py](code/pipelines/pipeline_semi_final_endpoint.py) | One stable label per cell, averaged over the last K sickled frames | — |
-| [pipeline_semi_final_sickling_time.py](code/pipelines/pipeline_semi_final_sickling_time.py) | Same endpoint label | Per-cell **sickling onset time** and **completion time**, plus stability scores |
+`models/semi_final_classifier.pt` is a ConvNeXt-Tiny that splits already-sickled cells
+into `semi_sickled` and `final_sickled`. Three scripts in `code/pipelines/` wrap it. They
+share the same front half as the subtype pipelines — Cellpose segmentation, tracking, and
+the all-subtype Siamese head that decides when a cell has sickled.
 
-A per-frame label flickers: a cell drifting near the decision boundary flips between
-`semi` and `final` from one frame to the next. The endpoint variants exist to collapse
-that into one label per cell by averaging the last `--endpoint_subtype_frames`
-observations, which is what makes a per-cell sickling *time* meaningful.
+They are a **lineage, not a menu**: each was written to fix the previous one, and
+`pipeline_semi_final_sickling_time.py` contains every function in
+`pipeline_semi_final_endpoint.py` plus ten more. Start from the last one.
 
-### Usage
+| Script | Order | What it added | Degree label |
+|--------|-------|---------------|--------------|
+| `pipeline_semi_final_detection.py` | first | Degree classification at all, on top of the A–G subtype outputs | Re-decided every frame, so it flickers near the boundary |
+| `pipeline_semi_final_endpoint.py` | second | Collapsed the flicker into one label per cell | Averaged over the last `--endpoint_subtype_frames` sickled frames |
+| `pipeline_semi_final_sickling_time.py` | current | Per-cell sickling onset and completion time, plus stability scoring | Same endpoint label as above |
 
 ```bash
-# Endpoint label per cell
-python code/pipelines/pipeline_semi_final_endpoint.py \
-    -i data/videos/V1.mp4 \
-    -o results/SemiFinal_endpoint_V1 \
-    --frame_skip 2 --max_frame 480
-
-# Endpoint label + per-cell sickling onset and completion times
 python code/pipelines/pipeline_semi_final_sickling_time.py \
-    -i data/videos/V2.mp4 \
-    -o results/SemiFinal_endpoint_time_V2 \
-    --frame_skip 2 --max_frame 480
+    -i data/videos/V1.mp4 -o results/<run-name> --frame_skip 2 --max_frame 480
 ```
 
-Pass several videos as one comma-separated `-i` list to get a pooled summary alongside
-the per-video folders, exactly as with the subtype pipelines.
+Comma-separate `-i` for several videos, as with the subtype pipelines.
 
-| Flag | Default | Applies to | Meaning |
-|------|---------|-----------|---------|
-| `--frame_skip` | `2` (`1` for sickling-time) | all | Process every Nth frame |
-| `--max_frame` | `480` | all | Maximum frames to process |
-| `--endpoint_subtype_frames` | `5` | endpoint, sickling-time | Average degree probabilities over the last K sickled observations |
-| `--sickling_threshold` | `0.73` | endpoint, sickling-time | Siamese score above which a cell counts as sickled |
-| `--sickling_min_persist` | `1` | endpoint, sickling-time | Consecutive above-threshold frames required |
-| `--sickling_ema` | `1.0` | endpoint, sickling-time | EMA on the Siamese score; `1.0` disables smoothing |
-| `--completion_stable_frames` | `6` | sickling-time | Consecutive low-change frames that mark sickling complete |
-| `--completion_change_threshold` | `0.05` | sickling-time | Maximum change score still considered stable |
-| `--completion_score_mode` | `combined` | sickling-time | `combined`, `probability`, or `all` — which criteria decide completion |
-| `--completion_min_duration_sec` | `0` | sickling-time | Minimum time after onset before completion may be reported |
+### Flags beyond `--frame_skip` / `--max_frame`
 
-### Extra outputs
+Endpoint and sickling-time only. **The defaults are not tuned** — `--sickling_ema 1.0`
+disables smoothing and `--sickling_min_persist 1` disables persistence, i.e. the two
+flicker-suppression mechanisms the subtype runs in `results/` lean on heavily are
+present but switched off.
 
-On top of the standard run-folder contents, these pipelines write:
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--endpoint_subtype_frames` | `5` | Average degree probabilities over the last K sickled observations |
+| `--sickling_threshold` | `0.73` | Siamese score above which a cell counts as sickled |
+| `--sickling_min_persist` | `1` | Consecutive above-threshold frames required |
+| `--sickling_ema` | `1.0` | EMA on the Siamese score; `1.0` disables smoothing |
+| `--completion_stable_frames` | `6` | Consecutive low-change frames that mark sickling complete |
+| `--completion_change_threshold` | `0.05` | Maximum change score still considered stable |
+| `--completion_score_mode` | `combined` | `combined`, `probability`, or `all` |
+| `--completion_min_duration_sec` | `0` | Minimum time after onset before completion may be reported |
 
-```
-results/<run-name>/
-├── V*/
-│   ├── endpoint_semi_final_sickled_fraction.{csv,png}   semi / final / total sickled % vs. time
-│   ├── sickling_time_report.csv                         per-cell onset and completion time
-│   ├── sickling_time_summary.csv                        medians and counts
-│   ├── stability_score_report.csv                       per-cell, per-frame stability score
-│   └── stability_score_{summary,consistency}.csv
-└── combined_endpoint_semi_final_sickled_fraction.{csv,png}
-```
+On top of the standard run-folder contents these write
+`endpoint_semi_final_sickled_fraction.{csv,png}` (per-frame semi/final/total sickled %),
+and the sickling-time script adds `sickling_time_report.csv` (per-cell onset and
+completion), `sickling_time_summary.csv`, and `stability_score_*.csv`. The first script
+writes `semi_final_sickled_fraction.*` instead, having no endpoint stage.
 
-`pipeline_semi_final_detection.py` writes `semi_final_sickled_fraction.*` instead, since
-it has no endpoint stage.
+### The classifier
 
----
-
-## Sickling-degree classifier
-
-[code/training/](code/training/) holds the CLI toolkit that produced
-`models/semi_final_classifier.pt`. Every script imports `train_vit.py`, so run them from
-the repository root (or anywhere — paths are anchored to the repo, not the working
-directory).
-
-| Script | Purpose |
-|--------|---------|
-| [train_vit.py](code/training/train_vit.py) | Fine-tunes one of `vit_b_16`, `convnext_tiny`, `efficientnet_b0/b3`, `resnet50`, `swin_t`. Also the shared library: `build_model`, `build_transforms`, `load_checkpoint`. |
-| [evaluate_vit.py](code/training/evaluate_vit.py) | Re-scores a saved run on `val` or `test` without retraining. |
-| [ensemble_evaluate.py](code/training/ensemble_evaluate.py) | Averages probabilities across several checkpoints. |
-| [tune_threshold.py](code/training/tune_threshold.py) | Sweeps the binary decision threshold on the validation split. |
-| [export_misclassifications.py](code/training/export_misclassifications.py) | Writes the false positives and false negatives out as PNGs for eyeballing. |
-| [train_morphology_features.py](code/training/train_morphology_features.py) | Trains on 21 hand-computed shape/intensity features, optionally concatenated with the CNN probabilities. |
-| [predict_vit.py](code/training/predict_vit.py) | Single-image prediction. |
-| [move_bad_images.py](code/training/move_bad_images.py) | Quarantines truncated/unreadable PNGs out of the dataset. |
+[code/training/](code/training/) is the CLI toolkit that produced the checkpoint:
+`train_vit.py` (fine-tunes `vit_b_16`, `convnext_tiny`, `efficientnet_b0/b3`, `resnet50`,
+or `swin_t`, and doubles as the shared library the pipelines import),
+`evaluate_vit.py`, `ensemble_evaluate.py`, `tune_threshold.py`,
+`export_misclassifications.py`, `train_morphology_features.py`, `predict_vit.py`, and
+`move_bad_images.py`.
 
 ```bash
 python code/training/train_vit.py --model convnext_tiny --image-size 320 \
     --loss focal --augmentation conservative --epochs 20
-
 python code/training/evaluate_vit.py --run-dir runs/<run-name> --split test
-python code/training/tune_threshold.py --run-dir runs/<run-name> --metric macro_f1
 ```
 
 Splits are grouped by source acquisition (`--split-by group`), so crops from one video
-never straddle train and test. `splits.csv` is regenerated deterministically from
-`--seed` and is therefore not tracked.
+never straddle train and test. `splits.csv` regenerates deterministically from `--seed`
+and is not tracked. Training writes to `runs/<model>_sickling_degree_<timestamp>/`, which
+is untracked — the same read-only-`models/` policy as `models/rbc_ckpts/`. The current
+checkpoint was promoted by hand and is byte-identical to
+`runs/convnext_tiny_sickling_degree_20260505_215821/best_model.pt`.
 
-### Where the weights go
+### Where things stand
 
-Training writes to `runs/<model>_sickling_degree_<timestamp>/`, which is **not tracked**
-— same policy as `models/rbc_ckpts/` for the notebooks. Promoting a checkpoint is a
-deliberate copy up into `models/` under a released name:
-
-```bash
-cp runs/convnext_tiny_sickling_degree_20260505_215821/best_model.pt \
-   models/semi_final_classifier.pt
-```
-
-That is exactly how the current `models/semi_final_classifier.pt` was produced; the two
-files are byte-identical.
-
-### Results
-
-Test-set numbers for every completed run are in
-[results/validation/sickling_degree/](results/validation/sickling_degree/), summarised in
-[model_comparison.csv](results/validation/sickling_degree/model_comparison.csv). Held-out
-test split, 1,686 crops:
+Held-out test split, 1,686 crops. Full per-run metrics in
+[results/validation/sickling_degree/](results/validation/sickling_degree/).
 
 | Approach | Accuracy | Macro F1 |
 |----------|---------:|---------:|
 | 3-model ensemble — convnext_tiny + vit_b_16 + efficientnet_b3 | 0.9100 | 0.9074 |
 | 2-model ensemble — convnext_tiny + vit_b_16 | 0.9077 | 0.9051 |
-| `convnext_tiny` @320, focal loss (best single model) | 0.9071 | 0.9040 |
+| `convnext_tiny` @320, focal (run `..._163854`) | 0.9071 | 0.9040 |
 | Morphology + CNN-probability hybrid | 0.9047 | 0.9023 |
-| `convnext_tiny` @320, focal — **shipped as `semi_final_classifier.pt`** | 0.9051 | 0.9012 |
+| `convnext_tiny` @320, focal (run `..._215821`) — the promoted checkpoint | 0.9051 | 0.9012 |
 | `vit_b_16` @224, cross-entropy | 0.8983 | 0.8956 |
 | `efficientnet_b3` @300, cross-entropy | 0.8878 | 0.8841 |
 | 21 morphology features alone, no CNN | 0.7972 | 0.7938 |
 
-Two things worth knowing before building on these numbers. First, the shipped checkpoint
-is **not** the best single run — a second `convnext_tiny` run scores 0.0028 macro F1
-higher, within noise, but it is the run all the ensemble, threshold, and morphology
-analysis was done against, so the two are easy to confuse. Second, hand-crafted
-morphology features alone land 11 points behind the CNN, and adding them *on top of* the
-CNN probabilities does not beat the CNN alone — on this dataset the CNN has already
-captured the shape information those features encode.
+Two findings that should save someone a repeat: **morphology features are a dead end
+here** — 21 hand-computed shape and intensity descriptors land 11 points behind the CNN,
+and adding them on top of the CNN probabilities does not beat the CNN alone, so the CNN
+has already captured what they encode. And **threshold tuning is a no-op** — the
+validation optimum for both accuracy and macro F1 is 0.491, so argmax is fine.
 
-Threshold tuning on the validation split moves the `final_sickled` operating point from
-0.5 to 0.491 for accuracy and macro F1 — i.e. essentially nowhere, so the pipelines use
-the default argmax.
+Also note the two `convnext_tiny` runs are easy to confuse: `..._163854` is what every
+ensemble, threshold, and morphology experiment scores against, but `..._215821` is the
+one promoted to `semi_final_classifier.pt`. The 0.0028 macro F1 gap is inside noise; the
+checkpoints are different files.
+
+### What is unfinished
+
+- **No validation against ground truth.** Nothing here is compared against
+  `reference/kinetics-seven_Jianlu.xlsx`, which is how the subtype pipelines are
+  judged. Until that happens the sickling *times* are unverified output, not a result.
+- **Two of four videos.** V1 has been run through everything and V2 once; V3 and V4
+  never. No pooled multi-video summary exists.
+- **The temporal parameters are untuned**, per the flag table above. Whether the
+  endpoint labels are stable under sensible EMA and persistence settings is untested.
+- **The best result is not wired in.** The 3-model ensemble leads, but no pipeline uses
+  it — it would mean three backbones per frame for +0.003 macro F1. Unresolved, not
+  decided.
+- **`pipeline_semi_final_endpoint.py` is probably redundant** now that the sickling-time
+  script is a strict superset of it. It has not been retired because nothing has
+  confirmed the two agree.
+- **No validation figures.** `results/validation/` has ROC curves, confusion matrices,
+  and per-cell-type accuracy plots for the subtype models; the sickling-degree subfolder
+  has CSV and JSON only.
+- Three training runs (`vit_sickling_degree_20260503_19{2107,3546,4817}`) died after
+  writing `splits.csv` and were left in `runs/`.
 
 ## Run configurations
 
@@ -332,15 +312,17 @@ suppress per-frame classification flicker.
 | `newly_trained_EMA0.5_withD` | Retrained, EMA 0.5, with D |
 | `newlytrained_2inRow_EMA0.5_withD` | Retrained, 2-in-a-row, EMA 0.5, with D |
 
-Sickling-degree runs (`semi_sickled` / `final_sickled`, one video each):
+The `SemiFinal_*` folders are from the unfinished sickling-degree work rather than
+tuned experiments — single-video smoke runs at default settings, kept because they are
+the only recorded output of those scripts. Four of the five are V1.
 
-| Folder | Pipeline | Configuration |
-|--------|----------|---------------|
-| `SemiFinal_perframe_V1` | `pipeline_semi_final_detection` | Per-frame degree label, V1 |
-| `SemiFinal_endpoint_V1` | `pipeline_semi_final_endpoint` | Stable endpoint label, V1 |
-| `SemiFinal_endpoint_time_V1` | `pipeline_semi_final_sickling_time` | Endpoint + sickling times, V1 |
-| `SemiFinal_endpoint_time_V2` | `pipeline_semi_final_sickling_time` | Endpoint + sickling times, V2 |
-| `SemiFinal_endpoint_time_probonly_V1` | `pipeline_semi_final_sickling_time` | As above, `--completion_score_mode probability` |
+| Folder | Pipeline | Note |
+|--------|----------|------|
+| `SemiFinal_perframe_V1` | `pipeline_semi_final_detection` | Earliest script; per-frame label |
+| `SemiFinal_endpoint_V1` | `pipeline_semi_final_endpoint` | Second script |
+| `SemiFinal_endpoint_time_V1` | `pipeline_semi_final_sickling_time` | Current script |
+| `SemiFinal_endpoint_time_V2` | `pipeline_semi_final_sickling_time` | Only non-V1 run |
+| `SemiFinal_endpoint_time_probonly_V1` | `pipeline_semi_final_sickling_time` | `--completion_score_mode probability` |
 
 ### What a run folder contains
 

@@ -1,5 +1,10 @@
 # Sickling-degree classifier validation
 
+> **Status: unfinished.** These are the metrics an exploratory line of work happened to
+> produce, not a validation suite. Nothing here is compared against
+> `reference/kinetics-seven_Jianlu.xlsx`, and unlike the parent `results/validation/`
+> there are no ROC, confusion, or accuracy figures — CSV and JSON only.
+
 Metrics for the `semi_sickled` vs `final_sickled` classifier, copied out of the untracked
 `runs/` training scratch. Held-out test split: 1,686 crops (706 `final_sickled`,
 980 `semi_sickled`), grouped by source acquisition so no video straddles train and test.
