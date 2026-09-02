@@ -6,8 +6,8 @@
 # datasets, model weights, and the multi-hundred-MB
 # per-run intermediates.
 #
-# Note: code/ has its own .gitignore with the standard
-# Python patterns; this file covers the data/large-file rules.
+# The excluded weights and datasets are listed in the README
+# under "Data not in this repository".
 # ============================================================
 
 # ---------- OS / editor cruft ----------
@@ -23,13 +23,40 @@ desktop.ini
 # ---------- Python ----------
 __pycache__/
 *.py[cod]
+*$py.class
 .ipynb_checkpoints/
 .venv/
 venv/
 env/
+ENV/
 .env
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# ---------- Raw and rendered video ----------
+# ---------- Model weights / checkpoints ----------
+# All of models/ is excluded: ~4.3 GB, far past GitHub's 100 MB/file limit.
+/models/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.hdf5
+
+# Training run scratch
+runs/
+wandb/
+lightning_logs/
+checkpoint-*/
+
+# ---------- Raw input data ----------
+# Source video and the cropped single-cell PNG datasets.
+/data/
 *.mp4
 *.avi
 *.mov
@@ -39,24 +66,6 @@ env/
 *.tif
 *.tiff
 
-# ---------- Model weights / checkpoints ----------
-*.pt
-*.pth
-*.ckpt
-*.onnx
-*.safetensors
-*.h5
-*.hdf5
-code/rbc_ckpts/
-# Cellpose model file (no extension)
-code/cyto3_train0327
-
-# ---------- Image datasets (cropped single-cell PNGs) ----------
-/Alldataset_for_subtypeclassification/
-/Paired dataset_10122025/
-/C dataset/
-/D_Reticulocyte/
-
 # ---------- Large per-run pipeline intermediates ----------
 # ~140 MB each: full per-cell tracking dict for a whole video
 cell_info.pkl
@@ -64,11 +73,8 @@ cell_info.pkl
 first_frame.png
 # ~6 MB each: Cellpose segmentation mask array
 masks_remove_edge_cells.npy
-*.npz
-
-# Catch-all for any other bulky binary that shows up later.
-# Small result plots/CSVs are re-added explicitly below.
 *.npy
+*.npz
 
 # ---------- Explicitly keep small result artifacts ----------
 !*.csv

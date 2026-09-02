@@ -1,0 +1,18 @@
+# Pipeline dependencies. Install into a fresh env:
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# torch/torchvision: install the build matching your platform first
+# (CUDA wheels on Windows/Linux, default wheels for Apple Silicon MPS).
+torch
+torchvision
+transformers
+cellpose
+opencv-python
+numpy
+pandas
+matplotlib
+scikit-image
+Pillow
+tqdm
+openpyxl
