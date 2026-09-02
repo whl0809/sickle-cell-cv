@@ -14,7 +14,12 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from torch.utils.data import DataLoader
-from transformers import ViTFeatureExtractor, ViTModel,AutoModel
+# transformers >=4.41 removed ViTFeatureExtractor in favour of ViTImageProcessor.
+try:
+    from transformers import ViTFeatureExtractor
+except ImportError:
+    from transformers import ViTImageProcessor as ViTFeatureExtractor
+from transformers import ViTModel, AutoModel
 print("DEBUG: IMPORT - 3")
 from PIL import Image
 import os

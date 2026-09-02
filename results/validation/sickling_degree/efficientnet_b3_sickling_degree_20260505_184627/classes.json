@@ -1,0 +1,14 @@
+{
+  "classes": [
+    "final_sickled",
+    "semi_sickled"
+  ],
+  "class_folders": {
+    "final_sickled": "Sickled1-FinalSickled",
+    "semi_sickled": "Sickled2-SemiSickled"
+  },
+  "model_name": "efficientnet_b3",
+  "image_size": 300,
+  "augmentation": "conservative",
+  "loss": "cross_entropy"
+}

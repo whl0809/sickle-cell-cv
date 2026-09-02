@@ -1,0 +1,67 @@
+{
+  "positive_class": "final_sickled",
+  "negative_class": "semi_sickled",
+  "optimized_metric": "accuracy",
+  "threshold": 0.491,
+  "classes": [
+    "final_sickled",
+    "semi_sickled"
+  ],
+  "checkpoint": "runs\\convnext_tiny_sickling_degree_20260505_163854\\best_model.pt",
+  "val_metrics": {
+    "accuracy": 0.8974358974358975,
+    "macro_f1": 0.894112697388719,
+    "per_class": [
+      {
+        "precision": 0.9008746355685131,
+        "recall": 0.8512396694214877,
+        "f1": 0.8753541076487252,
+        "support": 726
+      },
+      {
+        "precision": 0.8951456310679612,
+        "recall": 0.9313131313131313,
+        "f1": 0.9128712871287128,
+        "support": 990
+      }
+    ],
+    "confusion_matrix": [
+      [
+        618,
+        108
+      ],
+      [
+        68,
+        922
+      ]
+    ]
+  },
+  "test_metrics": {
+    "accuracy": 0.9070718877849211,
+    "macro_f1": 0.904164804029426,
+    "per_class": [
+      {
+        "precision": 0.9153284671532846,
+        "recall": 0.8612637362637363,
+        "f1": 0.8874734607218684,
+        "support": 728
+      },
+      {
+        "precision": 0.9015594541910331,
+        "recall": 0.940996948118006,
+        "f1": 0.9208561473369836,
+        "support": 983
+      }
+    ],
+    "confusion_matrix": [
+      [
+        627,
+        101
+      ],
+      [
+        58,
+        925
+      ]
+    ]
+  }
+}

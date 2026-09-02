@@ -11,6 +11,9 @@
 # ============================================================
 
 # ---------- OS / editor cruft ----------
+# WSL/Windows writes an alternate-data-stream sidecar next to every downloaded file;
+# on Linux these surface as real files. 11k of them were removed during the 2026 cleanup.
+*Zone.Identifier
 .DS_Store
 ._*
 .Spotlight-V100
@@ -53,6 +56,12 @@ runs/
 wandb/
 lightning_logs/
 checkpoint-*/
+
+# ---------- Redistributable bundles ----------
+# Zipped model+script packs handed to collaborators. Regenerated on demand, and every
+# member is already present under models/ and code/.
+/dist/
+*.zip
 
 # ---------- Raw input data ----------
 # Source video and the cropped single-cell PNG datasets.

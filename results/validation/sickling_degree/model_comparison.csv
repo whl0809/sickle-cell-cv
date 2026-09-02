@@ -1,0 +1,8 @@
+run,model,image_size,augmentation,loss,test_accuracy,test_macro_f1,test_loss,final_sickled_precision,final_sickled_recall,final_sickled_f1,final_sickled_support,semi_sickled_precision,semi_sickled_recall,semi_sickled_f1,semi_sickled_support
+convnext_tiny_sickling_degree_20260505_163854,convnext_tiny,320,conservative,focal,0.9071,0.904,0.0714,0.919,0.8571,0.887,728,0.8992,0.944,0.9211,983
+convnext_tiny_sickling_degree_20260505_215821,convnext_tiny,320,conservative,focal,0.9051,0.9012,0.0614,0.9226,0.8442,0.8817,706,0.8942,0.949,0.9208,980
+vit_b_16_sickling_degree_20260505_205006,vit_b_16,224,conservative,cross_entropy,0.8983,0.8956,0.253,0.8901,0.8681,0.879,728,0.9041,0.9207,0.9123,983
+vit_sickling_degree_20260503_195146,vit,,,,0.8884,0.8845,0.2638,0.9001,0.8297,0.8635,728,0.8808,0.9318,0.9056,983
+efficientnet_b3_sickling_degree_20260505_184627,efficientnet_b3,300,conservative,cross_entropy,0.8878,0.8841,0.2775,0.8953,0.8338,0.8634,728,0.8829,0.9278,0.9048,983
+convnext_tiny_sickling_degree_20260505_181539,convnext_tiny,384,conservative,focal,0.8843,0.8828,0.0668,0.8354,0.9066,0.8696,728,0.9262,0.8678,0.896,983
+efficientnet_b3_sickling_degree_20260505_173112,efficientnet_b3,320,conservative,focal,0.8778,0.875,0.0757,0.8589,0.853,0.856,728,0.8917,0.8962,0.894,983

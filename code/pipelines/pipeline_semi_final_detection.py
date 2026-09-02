@@ -1,8 +1,12 @@
-# --- repo-root-anchored model directory (added during 2026 reorganisation) ---
+# --- repo-root-anchored paths (added during 2026 reorganisation) ---
 # Weights live in <repo>/models/ and are resolved from this file's location, so the
-# pipelines can be launched from any working directory.
+# pipeline can be launched from any working directory. The shared classifier helpers
+# (build_model / build_transforms / load_checkpoint) live in <repo>/code/training/.
+import sys as _sys
 from pathlib import Path as _Path
-MODELS_DIR = _Path(__file__).resolve().parents[2] / "models"
+REPO_ROOT = _Path(__file__).resolve().parents[2]
+MODELS_DIR = REPO_ROOT / "models"
+_sys.path.insert(0, str(REPO_ROOT / "code" / "training"))
 
 print("DEBUG: IMPORT - 1")
 import cv2
@@ -14,7 +18,6 @@ from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from torch.utils.data import DataLoader
-# transformers >=4.41 removed ViTFeatureExtractor in favour of ViTImageProcessor.
 try:
     from transformers import ViTFeatureExtractor
 except ImportError:
@@ -35,18 +38,35 @@ from skimage.measure import label, regionprops
 import argparse
 import os
 import pickle
+import sys
+import torch.nn.functional as F
+from train_vit import build_model, build_transforms, load_checkpoint, normalize_model_name
 print("DEBUG: IMPORT - 5")
 
 #------------- Constants ----------------
+def model_path(filename):
+    """Resolve a weight file under <repo>/models/, failing loudly if it is absent."""
+    path = MODELS_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing model weight: {path}\n"
+            "models/ is not tracked in git; see 'Data not in this repository' in README.md."
+        )
+    return str(path)
+
+
 # Note (kaiyu): in cv2, color is BGR
 BLUE = (255, 0, 0)
 RED = (0, 0, 255)
 LABEL_CHANGED = 0
 LABEL_UNCHANGED = 1
+SICKLE_SUBTYPE_COLORS = {
+    "unsickled": BLUE,
+    "semi_sickled": (0, 165, 255),
+    "final_sickled": RED,
+}
 
-# Note (kaiyu) Maps from class index to class name
-DNAME={0:'A', 1:'B', 2:'C', 3:'D', 4:'E', 5:'F', 6:'G'}
-CLS_ID={v:k for k,v in DNAME.items()}
+# This semi/final pipeline does not classify cell types A-G.
 
 #####################################################################
 # Note (kaiyu) organize these definitions on top for clarity
@@ -75,43 +95,76 @@ class ViTClassifier(nn.Module):
         cls_token = outputs.pooler_output
         return self.classifier(cls_token)
     
+# Siamese Vit Model
+class SiameseViTChange(nn.Module):
+    def __init__(self, backbone="google/vit-base-patch16-224-in21k", proj_dim=512, dropout=0.1):
+        super().__init__()
+        self.vit = ViTModel.from_pretrained(backbone)
+        h = self.vit.config.hidden_size          # 768 for ViT-Base
+        self.proj = nn.Sequential(
+            nn.Linear(h, proj_dim), nn.ReLU(), nn.Dropout(dropout)
+        )
+        self.head = nn.Sequential(
+            nn.Linear(proj_dim*2, proj_dim), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(proj_dim, 1)            # BCEWithLogitsLoss
+        )
+
+    def encode(self, x):                       # x: (B,3,224,224), normalized
+        # out = self.vit(pixel_values=x).pooler_output
+        # return self.proj(out)
+
+        # Ensure contiguity
+        x = x.contiguous()
+        out = self.vit(pixel_values=x)
+        cls = out.pooler_output if out.pooler_output is not None else out.last_hidden_state[:, 0]
+        cls = cls.contiguous()
+        proj = self.proj(cls).contiguous()
+        return proj
+
+    def forward(self, x0, x1):
+        # f0, f1 = self.encode(x0), self.encode(x1)
+        # z = torch.cat([ (f0 - f1).abs(), f0 * f1 ], dim=1)
+        # logit = self.head(z).squeeze(1)
+        # return logit
+        
+        # Ensure contiguity
+        f0, f1 = self.encode(x0), self.encode(x1)
+        # (optional but recommended) normalize embeddings
+        f0 = F.normalize(f0, dim=1)
+        f1 = F.normalize(f1, dim=1)
+
+        z = torch.cat([(f0 - f1).abs(), f0 * f1], dim=1)
+        logit = self.head(z)
+        return logit.reshape(-1)
     
-seven_class_model_path = str(MODELS_DIR / "best_model_vit_torch_macos_seven.pth")  # Herui's model
-seven_class_model = ViTClassifier(num_classes=7)
-seven_class_model.load_state_dict(torch.load(seven_class_model_path, map_location=device))
-seven_class_model.to(device)
-seven_class_model.eval()
+    
+pair_model_path_All = model_path("siamese_vit_All_Haolin.pt")  # Haolin's model
+pair_model_All = SiameseViTChange()
+pair_model_All.load_state_dict(torch.load(pair_model_path_All, map_location=device))
+pair_model_All.to(device)
+pair_model_All.eval()
 
-binary_model_path = str(MODELS_DIR / "best_model_vit_torch_macos_raw_vit_large_binary.pth") # Herui's model
-binary_model = ViTClassifier(num_classes=2)
-binary_model.load_state_dict(torch.load(binary_model_path, map_location=device))
-binary_model.to(device)
-binary_model.eval()
-
-
-binary_model_path_D = str(MODELS_DIR / "direct_vit_D.pt") # Brandon's model
-binary_model_D = ViTClassifier(num_classes=2)
-binary_model_D.load_state_dict(torch.load(binary_model_path_D, map_location=device))
-binary_model_D.to(device)
-binary_model_D.eval()
-
-binary_model_path_E = str(MODELS_DIR / "direct_vit_E.pt")  # Brandon's model
-binary_model_E = ViTClassifier(num_classes=2)
-binary_model_E.load_state_dict(torch.load(binary_model_path_E, map_location=device))
-binary_model_E.to(device)
-binary_model_E.eval()
-
-binary_model_path_G = str(MODELS_DIR / "best_model_vit_torch_macos_raw_vit_large_binary_G.pth")  # Herui's model
-binary_model_G = ViTClassifier(num_classes=2)
-binary_model_G.load_state_dict(torch.load(binary_model_path_G, map_location=device))
-binary_model_G.to(device)
-binary_model_G.eval()
-
-binary_model_path_Gb = str(MODELS_DIR / "direct_vit_G.pt")  # Brandon's model
-binary_model_Gb = ViTClassifier(num_classes=2)
-binary_model_Gb.load_state_dict(torch.load(binary_model_path_Gb, map_location=device))
-binary_model_Gb.to(device)
-binary_model_Gb.eval()
+# Promoted out of runs/convnext_tiny_sickling_degree_20260505_215821/best_model.pt
+# (byte-identical) so the pipeline does not depend on untracked training scratch.
+semi_final_checkpoint_path = model_path("semi_final_classifier.pt")
+semi_final_checkpoint = load_checkpoint(semi_final_checkpoint_path, map_location="cpu")
+semi_final_classes = semi_final_checkpoint["classes"]
+semi_final_model_name = normalize_model_name(semi_final_checkpoint.get("model_name", "convnext_tiny"))
+semi_final_image_size = semi_final_checkpoint.get("image_size", 320)
+semi_final_augmentation = semi_final_checkpoint.get("augmentation", "conservative")
+semi_final_model = build_model(
+    num_classes=len(semi_final_classes),
+    pretrained=False,
+    model_name=semi_final_model_name,
+    image_size=semi_final_image_size,
+)
+semi_final_model.load_state_dict(semi_final_checkpoint["model_state"])
+semi_final_model.to(device)
+semi_final_model.eval()
+_, semi_final_transform = build_transforms(
+    semi_final_image_size,
+    augmentation=semi_final_augmentation,
+)
 
 feature_extractor = ViTFeatureExtractor.from_pretrained("google/vit-base-patch16-224-in21k")
 transform = transforms.Compose([
@@ -120,6 +173,14 @@ transform = transforms.Compose([
     transforms.Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std)
 ])
 #exit()
+
+
+def predict_sickled_subtype(cell_pil):
+    tensor = semi_final_transform(cell_pil).unsqueeze(0).to(device)
+    with torch.no_grad():
+        probabilities = torch.softmax(semi_final_model(tensor), dim=1).squeeze(0)
+    class_index = int(torch.argmax(probabilities).item())
+    return semi_final_classes[class_index], float(probabilities[class_index].item())
 
 
 #########################################################################
@@ -212,6 +273,37 @@ def plot_total_binary_ratio(df, out_path, frame_skip, fps ,title='Total cell rat
     df_out.to_csv(csv_out_path, index=False)
     print(f"Saved curve data to {csv_out_path}")
     
+
+def plot_sickled_subtype_ratio(df, out_path, frame_skip, fps, title='Semi/final sickled fraction'):
+    time_sec = df['FrameIndex'] * frame_skip / fps
+    semi_percent = df['SemiFraction'] * 100
+    final_percent = df['FinalFraction'] * 100
+    total_percent = df['SickledFraction'] * 100
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(time_sec, semi_percent, label='Semi-sickled fraction', color='#f5a623')
+    plt.plot(time_sec, final_percent, label='Final-sickled fraction', color='#d62728')
+    plt.plot(time_sec, total_percent, label='Total sickled fraction', color='black', linestyle='--', alpha=0.55)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Fraction of tracked cells (%)')
+    plt.ylim(0, 100)
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+
+    csv_out_path = out_path.replace(".png", ".csv")
+    df_out = pd.DataFrame({
+        "Time_sec": time_sec,
+        "Semi_sickled_fraction_percent": semi_percent,
+        "Final_sickled_fraction_percent": final_percent,
+        "Total_sickled_fraction_percent": total_percent,
+    })
+    df_out.to_csv(csv_out_path, index=False)
+    print(f"Saved curve data to {csv_out_path}")
+
 
 # ===  For cell tracing - Optical Flow function ===
 def estimate_next_bboxes(prev_frame_gray, curr_frame_gray, prev_bboxes):
@@ -453,7 +545,6 @@ def match_cells_tracking(prev_cells, curr_masks, bboxes):
             if check_size_outline(prev_box, best_box) or check_pos_outline(prev_box, best_box):
                 matches[track_id] = {
                     'bbox': prev_box,
-                    'class': prev_info['class'],
                 }
                 # if int(track_id) == check_id:
                 #     #print(cid, 'doesn\'t pass check_outline')
@@ -462,7 +553,6 @@ def match_cells_tracking(prev_cells, curr_masks, bboxes):
 
                 matches[track_id] = {
                     'bbox': best_box,
-                    'class': prev_info['class'],
                 }
                 # if int(track_id)==check_id:
                 #     print('best_cid is not None - ',best_box)
@@ -470,7 +560,6 @@ def match_cells_tracking(prev_cells, curr_masks, bboxes):
         else:
             matches[track_id]={
                 'bbox': prev_box,
-                'class': prev_info['class'],
             }
             # if int(track_id)==check_id:
             #     print('best_cid is None - ', prev_box)
@@ -570,7 +659,9 @@ def save_intermediate_results(cell_info, df, out_path):
 
 
 # -------------------- Main processing function ---------------------
-def process_video(video_path, out_path, video_id, output_video_path,seven_class_model,binary_model,feature_extractor,transform,cellpose_model_path = str(MODELS_DIR / "cyto3_train0327"),frame_skip=frame_skip,max_frame=max_frame,fps=fps):
+def process_video(video_path, out_path, video_id, output_video_path, feature_extractor, transform, cellpose_model_path = None, frame_skip=frame_skip, max_frame=max_frame, fps=fps):
+    if cellpose_model_path is None:
+        cellpose_model_path = model_path('cyto3_train0327')
     # ========= 视频初始化 =========
     print('- Initialization......')
     cap = cv2.VideoCapture(video_path)
@@ -601,72 +692,37 @@ def process_video(video_path, out_path, video_id, output_video_path,seven_class_
     # information output by the models to produce results
     cell_info = {}
 
-    print('- Process cells in frame 0......')
+    print('- Initialize cells in frame 0 as unsickled......')
     for cid in tqdm(unique_ids, desc='Process cells in frame 0 - progress:'):
-        DEBUG_PRINT("Running Six Class Prediction for Cell ID: ", cid)
-
         mask = (masks_seg == cid).astype(np.uint8)
         x, y, w, h=bboxes[cid][0],bboxes[cid][1],bboxes[cid][2],bboxes[cid][3]
         cell_crop = first_frame[y:y+h, x:x+w]
         cell_pil = Image.fromarray(cell_crop)
-        cell_tensor = transform(cell_pil).unsqueeze(0)
-
-        with torch.no_grad():
-            cls_output = seven_class_model(cell_tensor.to(device))
-            cls_probs = torch.softmax(cls_output, dim=1)
-            cls_id = torch.argmax(cls_probs, dim=1).item()
-            cls_prob = cls_probs[0, cls_id].item()
-
-            # Apply aspect ratio threshold of 1.5 for binary classification of A/G Jianlu 09182025
-            if cls_id == CLS_ID['A'] or cls_id == CLS_ID['G']:
-                if aspect_ratio(mask) >= 1.6:
-                    cls_id = CLS_ID['G']
-                else:
-                    cls_id = CLS_ID['A']
-
-            if cls_id == CLS_ID['G']:
-                bin_output = binary_model_Gb(cell_tensor.to(device))
-                bin_probs = 1-torch.softmax(bin_output, dim=1)
-                bin_label = torch.argmax(bin_probs, dim=1).item()
-                bin_prob = bin_probs[0, bin_label].item()
-            elif cls_id == CLS_ID['D']:
-                bin_output = binary_model_D(cell_tensor.to(device))
-                bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                bin_label = torch.argmax(bin_probs, dim=1).item()
-                bin_prob = bin_probs[0, bin_label].item()
-            elif cls_id == CLS_ID['E']:
-                bin_output = binary_model_E(cell_tensor.to(device))
-                bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                bin_label = torch.argmax(bin_probs, dim=1).item()
-                bin_prob = bin_probs[0, bin_label].item()
-            else:
-                bin_output = binary_model(cell_tensor.to(device))
-                bin_probs = torch.softmax(bin_output, dim=1)
-                bin_label = torch.argmax(bin_probs, dim=1).item()
-                bin_prob = bin_probs[0, bin_label].item()
-
         # Note (kaiyu): saves all bbox and state detections, per frame where detection was made. 
         cell_info[cid] = {
             'bbox': {0: (x, y, w, h)},     # cell bounding box; maps from frame id to bbox
-            'class': cls_id,            # predicted class based on frame0
-            'class_prob': cls_prob,        # prob of predicted class
-            'state_history': {0: bin_label},  # maps from frame id to past state predictions
-            'state_prob_history': {0: bin_prob}, # maps from frame id to past state prediction prob
+            'state_history': {0: LABEL_UNCHANGED},  # frame 0 is the unsickled baseline
+            'state_prob_history': {0: 1.0}, # maps from frame id to past state prediction prob
+            'subtype_history': {0: "unsickled"},
+            'subtype_prob_history': {0: 1.0},
             'latest_frame_index': 0       # the most recent frame index that was updated
         }
+        # --- NEW: init pairwise model state ---
+        cell_info[cid]['ref_tensor']      = transform(cell_pil)   # keep on CPU; .to(device) when using
+        cell_info[cid]['pair_score_ema']  = None                  # EMA for anti-flicker
+        cell_info[cid]['above_streak']    = 0                     # streak counter for K-in-a-row
 
-    print('- Process cells in frame 0......Done~')
+    print('- Initialize cells in frame 0 as unsickled......Done~')
     # ========= 初始化统计 =========
     frame_stats = []
-    num_classes = 7
-    frame_idx = 1
+    # frame_idx = 1
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if max_frame > total_frames:
         max_frame = total_frames
 
     # ========= 后续帧处理 =========
-    for frame_idx in tqdm(range(max_frame), desc="Processing frames"):
+    for frame_idx in tqdm(range(1, max_frame), desc="Processing frames"): # Note (Haolin): start from frame 1 to avoid overwriting frame 0 info
         ret, frame = cap.read()
         if not ret:
             break
@@ -685,37 +741,147 @@ def process_video(video_path, out_path, video_id, output_video_path,seven_class_
 
         for cid, info in matched.items():
             x, y, w, h = info['bbox']
-            cls_id = info['class']
             cell_crop = frame[y:y+h, x:x+w]
             cell_pil = Image.fromarray(cell_crop)
-            cell_tensor = transform(cell_pil).unsqueeze(0)
 
             with torch.no_grad():
-                if cls_id == CLS_ID['G'] and frame_idx>80:
-                    bin_output = binary_model_G(cell_tensor.to(device))
-                    bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                    bin_label = torch.argmax(bin_probs, dim=1).item()
-                    bin_prob = bin_probs[0, bin_label].item()
-                elif cls_id == CLS_ID['G'] and frame_idx < 80:
-                    bin_output = binary_model_Gb(cell_tensor.to(device))
-                    bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                    bin_label = torch.argmax(bin_probs, dim=1).item()
-                    bin_prob = bin_probs[0, bin_label].item()
-                elif cls_id == CLS_ID['D'] and frame_idx<80:
-                    bin_output = binary_model_D(cell_tensor.to(device))
-                    bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                    bin_label = torch.argmax(bin_probs, dim=1).item()
-                    bin_prob = bin_probs[0, bin_label].item()
-                elif cls_id == CLS_ID['E'] and frame_idx<80:
-                    bin_output = binary_model_E(cell_tensor.to(device))
-                    bin_probs = 1 - torch.softmax(bin_output, dim=1)
-                    bin_label = torch.argmax(bin_probs, dim=1).item()
-                    bin_prob = bin_probs[0, bin_label].item()
-                else:
-                    bin_output = binary_model(cell_tensor.to(device))
-                    bin_probs = torch.softmax(bin_output, dim=1)
-                    bin_label = torch.argmax(bin_probs, dim=1).item()
-                    bin_prob = bin_probs[0, bin_label].item()
+                # All subtypes use the same pairwise model
+                # inputs
+                ref_t = cell_info[cid]['ref_tensor'].to(device)   # (3,224,224)
+                cur_t = transform(cell_pil).to(device)            # (3,224,224)
+
+                # model
+                logit = pair_model_All(ref_t.unsqueeze(0), cur_t.unsqueeze(0))  # (1,)
+                p_changed = torch.sigmoid(logit[0]).item()
+
+                # --- parameters to tune ---
+                thr = 0.73
+                MIN_PERSIST = 2
+                EMA_coeff = 0.5
+
+                # smooth with EMA to reduce flicker
+                prev = cell_info[cid]['pair_score_ema']
+                s_ema = p_changed if prev is None else (EMA_coeff * p_changed + (1 - EMA_coeff) * prev)
+                cell_info[cid]['pair_score_ema'] = s_ema
+
+                # update streak
+                is_above = (s_ema >= thr)
+                streak = cell_info[cid].get('above_streak')
+                streak = streak + 1 if is_above else 0
+                cell_info[cid]['above_streak'] = streak
+
+                # when we *first* reach exactly MIN_PERSIST, retro-label previous MIN_PERSIST-1 frames
+                if streak == MIN_PERSIST:
+                    start_idx = frame_idx - (MIN_PERSIST - 1)
+                    for idx in range(start_idx, frame_idx):      # t-(MIN_PERSIST-1) ... t-1
+                        cell_info[cid]['state_history'][idx] = LABEL_CHANGED
+
+                # current frame label: changed iff we currently have >= MIN_PERSIST in a row
+                bin_label = LABEL_CHANGED if (streak >= MIN_PERSIST) else LABEL_UNCHANGED
+                bin_prob  = float(s_ema)
+
+                # write current frame's label into history
+                cell_info[cid]['state_history'][frame_idx] = bin_label
+                
+                # # if cls_id == CLS_ID['G'] and frame_idx>80:
+                # #     bin_output = binary_model_G(cell_tensor.to(device))
+                # #     bin_probs = 1 - torch.softmax(bin_output, dim=1)
+                # #     bin_label = torch.argmax(bin_probs, dim=1).item()
+                # #     bin_prob = bin_probs[0, bin_label].item()
+                # # elif cls_id == CLS_ID['G'] and frame_idx < 80:
+                # #     bin_output = binary_model_Gb(cell_tensor.to(device))
+                # #     bin_probs = 1 - torch.softmax(bin_output, dim=1)
+                # #     bin_label = torch.argmax(bin_probs, dim=1).item()
+                # #     bin_prob = bin_probs[0, bin_label].item()
+                # if cls_id == CLS_ID['G']: # ---- ISC uses the pairwise model ----
+                #     # inputs
+                #     ref_t = cell_info[cid]['ref_tensor'].to(device)   # (3,224,224)
+                #     cur_t = transform(cell_pil).to(device)            # (3,224,224)
+
+                #     # model
+                #     logit = pair_model_F(ref_t.unsqueeze(0), cur_t.unsqueeze(0))  # (1,)
+                #     p_changed = torch.sigmoid(logit[0]).item()
+
+                #     # --- parameters to tune ---
+                #     thr = 0.7
+                #     MIN_PERSIST = 2
+                #     EMA_coeff = 0.5
+
+                #     # smooth with EMA to reduce flicker
+                #     prev = cell_info[cid]['pair_score_ema']
+                #     s_ema = p_changed if prev is None else (EMA_coeff * p_changed + (1 - EMA_coeff) * prev)
+                #     cell_info[cid]['pair_score_ema'] = s_ema
+
+                #     # update streak
+                #     is_above = (s_ema >= thr)
+                #     streak = cell_info[cid].get('above_streak')
+                #     streak = streak + 1 if is_above else 0
+                #     cell_info[cid]['above_streak'] = streak
+
+                #     # when we *first* reach exactly MIN_PERSIST, retro-label previous MIN_PERSIST-1 frames
+                #     if streak == MIN_PERSIST:
+                #         start_idx = frame_idx - (MIN_PERSIST - 1)
+                #         for idx in range(start_idx, frame_idx):      # t-(MIN_PERSIST-1) ... t-1
+                #             cell_info[cid]['state_history'][idx] = LABEL_CHANGED
+
+                #     # current frame label: changed iff we currently have >= MIN_PERSIST in a row
+                #     bin_label = LABEL_CHANGED if (streak >= MIN_PERSIST) else LABEL_UNCHANGED
+                #     bin_prob  = float(s_ema)
+
+                #     # write current frame's label into history
+                #     cell_info[cid]['state_history'][frame_idx] = bin_label
+                # elif cls_id == CLS_ID['D']: # ---- Reticulocyte uses the pairwise model ----
+                #     # inputs
+                #     ref_t = cell_info[cid]['ref_tensor'].to(device)   # (3,224,224)
+                #     cur_t = transform(cell_pil).to(device)            # (3,224,224)
+
+                #     # model
+                #     logit = pair_model_C(ref_t.unsqueeze(0), cur_t.unsqueeze(0))  # (1,)
+                #     p_changed = torch.sigmoid(logit[0]).item()
+
+                #     # --- parameters to tune ---
+                #     thr = 0.7
+                #     MIN_PERSIST = 2
+                #     EMA_coeff = 0.5
+
+                #     # smooth with EMA to reduce flicker
+                #     prev = cell_info[cid]['pair_score_ema']
+                #     s_ema = p_changed if prev is None else (EMA_coeff * p_changed + (1 - EMA_coeff) * prev)
+                #     cell_info[cid]['pair_score_ema'] = s_ema
+
+                #     # update streak
+                #     is_above = (s_ema >= thr)
+                #     streak = cell_info[cid].get('above_streak')
+                #     streak = streak + 1 if is_above else 0
+                #     cell_info[cid]['above_streak'] = streak
+
+                #     # when we *first* reach exactly MIN_PERSIST, retro-label previous MIN_PERSIST-1 frames
+                #     if streak == MIN_PERSIST:
+                #         start_idx = frame_idx - (MIN_PERSIST - 1)
+                #         for idx in range(start_idx, frame_idx):      # t-(MIN_PERSIST-1) ... t-1
+                #             cell_info[cid]['state_history'][idx] = LABEL_CHANGED
+
+                #     # current frame label: changed iff we currently have >= MIN_PERSIST in a row
+                #     bin_label = LABEL_CHANGED if (streak >= MIN_PERSIST) else LABEL_UNCHANGED
+                #     bin_prob  = float(s_ema)
+
+                #     # write current frame's label into history
+                #     cell_info[cid]['state_history'][frame_idx] = bin_label
+                # # elif cls_id == CLS_ID['D'] and frame_idx<80:
+                # #     bin_output = binary_model_D(cell_tensor.to(device))
+                # #     bin_probs = 1 - torch.softmax(bin_output, dim=1)
+                # #     bin_label = torch.argmax(bin_probs, dim=1).item()
+                # #     bin_prob = bin_probs[0, bin_label].item()
+                # elif cls_id == CLS_ID['E'] and frame_idx<80:
+                #     bin_output = binary_model_E(cell_tensor.to(device))
+                #     bin_probs = 1 - torch.softmax(bin_output, dim=1)
+                #     bin_label = torch.argmax(bin_probs, dim=1).item()
+                #     bin_prob = bin_probs[0, bin_label].item()
+                # else:
+                #     bin_output = binary_model(cell_tensor.to(device))
+                #     bin_probs = torch.softmax(bin_output, dim=1)
+                #     bin_label = torch.argmax(bin_probs, dim=1).item()
+                #     bin_prob = bin_probs[0, bin_label].item()
 
             cell_info[cid]["bbox"][frame_idx] = (x, y, w, h)
             cell_info[cid]["state_history"][frame_idx] = bin_label
@@ -743,23 +909,50 @@ def process_video(video_path, out_path, video_id, output_video_path,seven_class_
         if frame_index == 0:
             out.write(frame)
             
-        frame_record = {'Frame': frame_index}       
-        class_counts = defaultdict(lambda: {'total': 0, 'state_1': 0})
+        frame_record = {'Frame': frame_index}
+        total_count = 0
+        sickled_count = 0
+        semi_count = 0
+        final_count = 0
         
         annotated_frame = frame.copy()
         for cid, info in cell_info.items():
             if frame_index in info['bbox']:
                 x, y, w, h = info['bbox'][frame_index]
                 bin_label = info['state_history'][frame_index]
-                color = BLUE if bin_label == LABEL_UNCHANGED else RED  
-                text = f"[{cid}] | C{info['class']} ({info['class_prob']:.2f})"
+                total_count += 1
+
+                subtype = "unsickled"
+                subtype_prob = 1.0
+                if bin_label == LABEL_CHANGED:
+                    cell_crop = frame[y:y+h, x:x+w]
+                    cell_pil = Image.fromarray(cell_crop)
+                    subtype, subtype_prob = predict_sickled_subtype(cell_pil)
+                    sickled_count += 1
+                    if subtype == "semi_sickled":
+                        semi_count += 1
+                    elif subtype == "final_sickled":
+                        final_count += 1
+
+                info.setdefault('subtype_history', {})[frame_index] = subtype
+                info.setdefault('subtype_prob_history', {})[frame_index] = subtype_prob
+                color = SICKLE_SUBTYPE_COLORS.get(subtype, RED)
+                text = f"[{cid}] | {subtype} ({subtype_prob:.2f})"
                 cv2.rectangle(annotated_frame, (x, y), (x+w, y+h), color, 2)
                 cv2.putText(annotated_frame, text, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 1)
-                
-                cls_id = info["class"]
-                class_counts[cls_id]['total'] += 1
-                if bin_label == LABEL_UNCHANGED:
-                    class_counts[cls_id]['state_1'] += 1
+
+                # # draw ONLY for Reticulocytes and ISCs
+                # x, y, w, h = info['bbox'][frame_index]
+                # bin_label = info['state_history'][frame_index]
+                # cls_id = info["class"]
+                # class_counts[cls_id]['total'] += 1
+                # if bin_label == LABEL_UNCHANGED:
+                #     class_counts[cls_id]['state_1'] += 1
+                # if cls_id == CLS_ID['D'] or cls_id == CLS_ID['G']:
+                #     color = BLUE if bin_label == LABEL_UNCHANGED else RED  # blue = not-sickled, red = sickled
+                #     text = f"[{cid}] | C{cls_id} ({info['class_prob']:.2f})"
+                #     cv2.rectangle(annotated_frame, (x, y), (x+w, y+h), color, 2)
+                #     cv2.putText(annotated_frame, text, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 1)
 
         # Save every 10 frames
         # if frame_index % 10 == 0:
@@ -770,18 +963,29 @@ def process_video(video_path, out_path, video_id, output_video_path,seven_class_
         out.write(annotated_frame)
 
         # 计算比例
-        for cls_id in range(num_classes):
-            total = class_counts[cls_id]['total']
-            pos = class_counts[cls_id]['state_1']
-            ratio = 1 - pos / total if total > 0 else 0
-            frame_record[f'Class_{cls_id}'] = round(ratio, 4)
-            frame_record[f'Class_{cls_id}_total'] =total
-            frame_record[f'Class_{cls_id}_pos'] = pos
+        frame_record['TotalCells'] = total_count
+        frame_record['SickledCells'] = sickled_count
+        frame_record['SemiSickledCells'] = semi_count
+        frame_record['FinalSickledCells'] = final_count
+        frame_record['SickledFraction'] = sickled_count / total_count if total_count > 0 else 0
+        frame_record['SemiFraction'] = semi_count / total_count if total_count > 0 else 0
+        frame_record['FinalFraction'] = final_count / total_count if total_count > 0 else 0
         frame_stats.append(frame_record)
-        out.write(annotated_frame)
+        #out.write(annotated_frame)
         
     cap.release()
     out.release()
+    df = pd.DataFrame(frame_stats)
+    df['FrameIndex'] = range(len(df))
+    df.to_csv(out_path+'/state_ratio_report.csv', index=False)
+    plot_sickled_subtype_ratio(df, out_path+'/semi_final_sickled_fraction.png', frame_skip, fps)
+    print("Finished - generate semi/final sickled csv and figure report.")
+    subtype_counts = Counter()
+    for info in cell_info.values():
+        for subtype in info.get('subtype_history', {}).values():
+            if subtype in {"semi_sickled", "final_sickled"}:
+                subtype_counts[subtype] += 1
+    return cell_info, df, subtype_counts
     print("Finished，results saved to：", output_video_path)
 
     # 统计每类细胞数量
@@ -870,6 +1074,39 @@ def process_video(video_path, out_path, video_id, output_video_path,seven_class_
 
 #os.makedirs(all_out, exist_ok=True)
 #out_path=[all_out+'/video1',all_out+'/video2',all_out+'/video3']
+
+semi_final_stats = []
+semi_final_subtype_counts = Counter()
+for idx, video_path in enumerate(video_paths):
+    os.makedirs(out_path[idx], exist_ok=True)
+    cell_info, df, subtype_counts = process_video(
+        video_path=video_path,
+        out_path=out_path[idx],
+        video_id=f"V{idx+1}",
+        output_video_path=out_path[idx]+'/'+output[idx],
+        feature_extractor=feature_extractor,
+        transform=transform,
+        frame_skip=frame_skip,
+        max_frame=max_frame,
+        fps=fps,
+    )
+    semi_final_stats.append(df)
+    semi_final_subtype_counts.update(subtype_counts)
+    save_intermediate_results(cell_info, df, out_path[idx])
+
+combined_df = pd.concat(semi_final_stats, ignore_index=True)
+count_columns = ['TotalCells', 'SickledCells', 'SemiSickledCells', 'FinalSickledCells']
+summed = combined_df.groupby('FrameIndex')[count_columns].sum().reset_index()
+frame_map = combined_df.groupby('FrameIndex')['Frame'].first().reset_index()
+final_df = pd.merge(summed, frame_map, on='FrameIndex')
+final_df['SickledFraction'] = np.where(final_df['TotalCells'] > 0, final_df['SickledCells'] / final_df['TotalCells'], 0)
+final_df['SemiFraction'] = np.where(final_df['TotalCells'] > 0, final_df['SemiSickledCells'] / final_df['TotalCells'], 0)
+final_df['FinalFraction'] = np.where(final_df['TotalCells'] > 0, final_df['FinalSickledCells'] / final_df['TotalCells'], 0)
+cols = ['FrameIndex', 'Frame'] + [col for col in final_df.columns if col not in ['FrameIndex', 'Frame']]
+final_df = final_df[cols]
+final_df.to_csv(all_out+'/state_ratio_report.csv', index=False)
+plot_sickled_subtype_ratio(final_df, all_out+'/combined_semi_final_sickled_fraction.png', frame_skip, fps)
+sys.exit(0)
 
 all_stats = []
 all_class_counts = Counter()

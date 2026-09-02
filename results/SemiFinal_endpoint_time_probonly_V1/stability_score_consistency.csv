@@ -1,0 +1,5 @@
+Comparison,PairsCompared,Correlation,StableAgreementRate
+Probability_vs_Shape,2165,0.4055448419424858,0.7528868360277137
+Probability_vs_TextureIntensity,2200,0.36540571727015686,0.7445454545454545
+Shape_vs_TextureIntensity,2182,0.6415699837984121,0.9711274060494959
+All_three,2165,,0.733487297921478

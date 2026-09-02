@@ -91,3 +91,43 @@ Meaning:
 
 
 
+
+
+### <2026-09-02 Wed> Folding in the sickling-degree work
+
+Merged the `sickling_degree_classifier` working directory into the repo layout. Notes on
+what was surprising rather than what was moved (the moves are in README.md under
+"Reorganisation notes").
+
+1. `pipeline_semi_final_detection.py` was loading its classifier from
+   `runs/convnext_tiny_sickling_degree_20260505_215821/best_model.pt`. That is training
+   scratch — untracked, and the exact path a re-run of `train_vit.py` would overwrite.
+   Same hazard the notebooks had with `models/rbc_ckpts/`, one directory over. Hashed it
+   against `semi_final_classifier.pt`: byte-identical, so the checkpoint had already been
+   promoted and the pipeline just never got repointed. It now loads from `models/`.
+
+2. The three current subtype pipelines import `ViTFeatureExtractor`, which transformers
+   dropped in 4.41. Only the incoming semi/final scripts had the
+   `ViTImageProcessor` fallback. Ported it across, so `pipelines/` runs on a current
+   transformers install.
+
+3. 11,177 `*Zone.Identifier` files, one per downloaded file — an NTFS alternate data
+   stream that shows up as a real file on WSL. They were 49% of the file count in the
+   directory. Deleted and added to `.gitignore`.
+
+4. `pipeline_semi_final_detection_package.zip` was 452 MB and every one of its six members
+   hashed identical to a file already in the tree. Moved to an ignored `dist/`.
+
+5. Morphology features are a dead end on this dataset. 21 hand-computed shape and
+   intensity descriptors reach 0.794 macro F1 against the CNN's 0.904, and concatenating
+   them with the CNN probabilities (0.902) does not beat the CNN alone. The CNN has
+   already learned what those features encode. Worth knowing before anyone tries again.
+
+6. Careful with the two `convnext_tiny` runs. `..._163854` is the analysis baseline —
+   every ensemble, threshold, and morphology result scores against it — but `..._215821`
+   is the one promoted to `semi_final_classifier.pt`. The gap is 0.0028 macro F1, well
+   inside noise, but the checkpoints are different files and easy to mix up.
+
+7. Best result overall is a 3-model probability average (convnext_tiny + vit_b_16 +
+   efficientnet_b3) at 0.9074 macro F1, +0.003 over the best single model. Not wired into
+   any pipeline: it would mean loading three backbones per frame for a third of a point.

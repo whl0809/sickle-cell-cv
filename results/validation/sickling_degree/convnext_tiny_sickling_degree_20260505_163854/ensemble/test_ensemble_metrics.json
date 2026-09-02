@@ -1,0 +1,138 @@
+{
+  "split": "test",
+  "classes": [
+    "final_sickled",
+    "semi_sickled"
+  ],
+  "checkpoints": [
+    "runs\\convnext_tiny_sickling_degree_20260505_163854\\best_model.pt",
+    "runs\\vit_b_16_sickling_degree_20260505_205006\\best_model.pt",
+    "runs\\efficientnet_b3_sickling_degree_20260505_184627\\best_model.pt"
+  ],
+  "member_metrics": [
+    {
+      "checkpoint": "runs\\convnext_tiny_sickling_degree_20260505_163854\\best_model.pt",
+      "model_name": "convnext_tiny",
+      "metrics": {
+        "accuracy": 0.9070718877849211,
+        "macro_f1": 0.904042707412953,
+        "per_class": [
+          {
+            "precision": 0.9189985272459499,
+            "recall": 0.8571428571428571,
+            "f1": 0.8869936034115139,
+            "support": 728
+          },
+          {
+            "precision": 0.8992248062015504,
+            "recall": 0.9440488301119023,
+            "f1": 0.9210918114143921,
+            "support": 983
+          }
+        ],
+        "confusion_matrix": [
+          [
+            624,
+            104
+          ],
+          [
+            55,
+            928
+          ]
+        ]
+      }
+    },
+    {
+      "checkpoint": "runs\\vit_b_16_sickling_degree_20260505_205006\\best_model.pt",
+      "model_name": "vit_b_16",
+      "metrics": {
+        "accuracy": 0.8983050847457628,
+        "macro_f1": 0.895648498138095,
+        "per_class": [
+          {
+            "precision": 0.8901408450704226,
+            "recall": 0.8681318681318682,
+            "f1": 0.8789986091794159,
+            "support": 728
+          },
+          {
+            "precision": 0.9040959040959041,
+            "recall": 0.9206510681586979,
+            "f1": 0.9122983870967742,
+            "support": 983
+          }
+        ],
+        "confusion_matrix": [
+          [
+            632,
+            96
+          ],
+          [
+            78,
+            905
+          ]
+        ]
+      }
+    },
+    {
+      "checkpoint": "runs\\efficientnet_b3_sickling_degree_20260505_184627\\best_model.pt",
+      "model_name": "efficientnet_b3",
+      "metrics": {
+        "accuracy": 0.8877849210987726,
+        "macro_f1": 0.884102147260042,
+        "per_class": [
+          {
+            "precision": 0.8952802359882006,
+            "recall": 0.8337912087912088,
+            "f1": 0.8634423897581792,
+            "support": 728
+          },
+          {
+            "precision": 0.882865440464666,
+            "recall": 0.9277721261444557,
+            "f1": 0.9047619047619048,
+            "support": 983
+          }
+        ],
+        "confusion_matrix": [
+          [
+            607,
+            121
+          ],
+          [
+            71,
+            912
+          ]
+        ]
+      }
+    }
+  ],
+  "ensemble_metrics": {
+    "accuracy": 0.9099941554646406,
+    "macro_f1": 0.9073509142053445,
+    "per_class": [
+      {
+        "precision": 0.9135446685878963,
+        "recall": 0.8708791208791209,
+        "f1": 0.8917018284106892,
+        "support": 728
+      },
+      {
+        "precision": 0.9075712881022615,
+        "recall": 0.9389623601220752,
+        "f1": 0.9229999999999998,
+        "support": 983
+      }
+    ],
+    "confusion_matrix": [
+      [
+        634,
+        94
+      ],
+      [
+        60,
+        923
+      ]
+    ]
+  }
+}
