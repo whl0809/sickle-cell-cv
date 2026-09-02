@@ -1,0 +1,82 @@
+# ============================================================
+# DaoLab / sickle-cell pipeline -- repo-level ignore rules
+#
+# Policy: track code, notebooks, and small result artifacts
+# (CSV reports + summary plots). Exclude raw video, image
+# datasets, model weights, and the multi-hundred-MB
+# per-run intermediates.
+#
+# Note: code/ has its own .gitignore with the standard
+# Python patterns; this file covers the data/large-file rules.
+# ============================================================
+
+# ---------- OS / editor cruft ----------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+.env
+
+# ---------- Raw and rendered video ----------
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.m4v
+*.wmv
+*.tif
+*.tiff
+
+# ---------- Model weights / checkpoints ----------
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.hdf5
+code/rbc_ckpts/
+# Cellpose model file (no extension)
+code/cyto3_train0327
+
+# ---------- Image datasets (cropped single-cell PNGs) ----------
+/Alldataset_for_subtypeclassification/
+/Paired dataset_10122025/
+/C dataset/
+/D_Reticulocyte/
+
+# ---------- Large per-run pipeline intermediates ----------
+# ~140 MB each: full per-cell tracking dict for a whole video
+cell_info.pkl
+# ~36 MB each: full-resolution first frame of the video
+first_frame.png
+# ~6 MB each: Cellpose segmentation mask array
+masks_remove_edge_cells.npy
+*.npz
+
+# Catch-all for any other bulky binary that shows up later.
+# Small result plots/CSVs are re-added explicitly below.
+*.npy
+
+# ---------- Explicitly keep small result artifacts ----------
+!*.csv
+!state_ratio_plot.png
+!state_ratio_plot_binary.png
+!frame0_class_pie.png
+!combined_state_ratio_plot.png
+!combined_frame0_class_pie.png
+!masks_BEFORE_remove_edge_cells.png
+!masks_AFTER_remove_edge_cells.png
+!df.pkl
